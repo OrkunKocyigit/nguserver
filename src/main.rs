@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::env::current_dir;
-use std::fmt::Formatter;
+use std::fmt::{Debug, Formatter};
 use std::fs;
 use std::fs::OpenOptions;
 
@@ -8,10 +8,13 @@ use axum::{Json, Router};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post;
+use chrono::Local;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde::de::{MapAccess, Visitor};
 use serde_json::{json, Value};
 use tower_http::cors::CorsLayer;
+
+const DATE_FORMAT_STR: &str = "%Y-%m-%d %H:%M:%S%.3f";
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +59,10 @@ async fn update_files(
     State(state): State<AppState>,
     Json(optimizer): Json<Vec<Optimizer>>,
 ) -> StatusCode {
+    println!(
+        "{} Optimizer request received",
+        Local::now().format(DATE_FORMAT_STR)
+    );
     let optimizer_map: HashMap<_, _> = optimizer.iter().map(|o| (&o.label, &o.ids)).collect();
     update_profile(state.file_path(), &optimizer_map);
     update_settings(
@@ -63,6 +70,7 @@ async fn update_files(
         state.settings_mapper(),
         &optimizer_map,
     );
+    println!("{} Files Updated", Local::now().format(DATE_FORMAT_STR));
     StatusCode::OK
 }
 
