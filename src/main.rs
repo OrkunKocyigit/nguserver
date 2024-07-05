@@ -5,7 +5,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::panic::panic_any;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use axum::{Json, Router};
@@ -23,7 +23,8 @@ use tower_http::cors::CorsLayer;
 const DATE_FORMAT_STR: &str = "%Y-%m-%d %H:%M:%S%.3f";
 #[derive(Clone)]
 struct AppState {
-    settings: Arc<Mutex<Settings>>,
+    settings: Arc<RwLock<Settings>>,
+    optimizer: Arc<RwLock<Option<Vec<Optimizer>>>>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -53,6 +54,7 @@ async fn main() {
         .join("settings.json");
     let state = load_state(&state_path);
     let settings = Arc::clone(&state.settings);
+    let optimizer = Arc::clone(&state.optimizer);
     let mut debouncer =
         new_debouncer(
             Duration::from_secs(1),
@@ -63,7 +65,26 @@ async fn main() {
                         Local::now().format(DATE_FORMAT_STR)
                     );
                     if let Some(s) = event.first().map(|e| load_settings(&e.path)) {
-                        let mut guard = settings.lock().unwrap();
+                        let mut guard = settings.write().unwrap();
+                        let optimizer_guard = optimizer.read().unwrap();
+                        if let Some(o) = optimizer_guard.as_ref() {
+                            println!(
+                                "{} Refreshing builds with last optimizer data.",
+                                Local::now().format(DATE_FORMAT_STR)
+                            );
+                            update_game_files(
+                                o,
+                                s.file_path(),
+                                s.settings_path(),
+                                s.settings_mapper(),
+                            );
+                            println!("{} Files Updated", Local::now().format(DATE_FORMAT_STR));
+                        } else {
+                            println!(
+                                "{} No previous optimizer result found, skipping refresh.",
+                                Local::now().format(DATE_FORMAT_STR)
+                            )
+                        }
                         *guard = s;
                     }
                 }
@@ -85,7 +106,8 @@ async fn main() {
 
 fn load_state(path_buf: &PathBuf) -> AppState {
     AppState {
-        settings: Arc::new(Mutex::new(load_settings(path_buf))),
+        settings: Arc::new(RwLock::new(load_settings(path_buf))),
+        optimizer: Arc::new(RwLock::new(None)),
     }
 }
 
@@ -102,18 +124,28 @@ async fn update_files(
         "{} Optimizer request received",
         Local::now().format(DATE_FORMAT_STR)
     );
-    let guard = state.settings.lock();
-    let settings = guard.unwrap();
-    dbg!(&settings);
-    let optimizer_map: HashMap<_, _> = optimizer.iter().map(|o| (&o.label, &o.ids)).collect();
-    update_profile(settings.file_path(), &optimizer_map);
-    update_settings(
+    let settings = state.settings.read().unwrap();
+    let mut optimizer_guard = state.optimizer.write().unwrap();
+    *optimizer_guard = Some(optimizer);
+    update_game_files(
+        optimizer_guard.as_ref().unwrap(),
+        settings.file_path(),
         settings.settings_path(),
         settings.settings_mapper(),
-        &optimizer_map,
     );
     println!("{} Files Updated", Local::now().format(DATE_FORMAT_STR));
     StatusCode::OK
+}
+
+fn update_game_files(
+    optimizer: &[Optimizer],
+    file_path: &str,
+    settings_path: &str,
+    settings_mapper: &HashMap<String, String>,
+) {
+    let optimizer_map: HashMap<_, _> = optimizer.iter().map(|o| (&o.label, &o.ids)).collect();
+    update_profile(file_path, &optimizer_map);
+    update_settings(settings_path, settings_mapper, &optimizer_map);
 }
 
 fn update_settings(
