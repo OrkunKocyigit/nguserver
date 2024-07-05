@@ -3,12 +3,17 @@ use std::env::current_dir;
 use std::fmt::{Debug, Formatter};
 use std::fs;
 use std::fs::OpenOptions;
+use std::panic::panic_any;
+use std::path::PathBuf;
+use std::time::Duration;
 
 use axum::{Json, Router};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post;
 use chrono::Local;
+use notify_debouncer_mini::{DebounceEventResult, new_debouncer};
+use notify_debouncer_mini::notify::RecursiveMode;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde::de::{MapAccess, Visitor};
 use serde_json::{json, Value};
@@ -38,7 +43,29 @@ impl AppState {
 
 #[tokio::main]
 async fn main() {
-    let state = load_state();
+    let state_path = current_dir()
+        .expect("Current dir not found")
+        .join("settings.json");
+    let state = load_state(&state_path);
+    let mut debouncer =
+        new_debouncer(
+            Duration::from_secs(1),
+            move |res: DebounceEventResult| match res {
+                Ok(event) => {
+                    println!(
+                        "{} Settings file refreshed",
+                        Local::now().format(DATE_FORMAT_STR)
+                    );
+                    event.first().map(|e| load_state(&e.path));
+                }
+                Err(e) => panic_any(e),
+            },
+        )
+        .expect("Failed to create debouncer");
+    debouncer
+        .watcher()
+        .watch(state_path.as_path(), RecursiveMode::NonRecursive)
+        .expect("Failed to watch settings file");
     let app = Router::new()
         .route("/", post(update_files))
         .layer(CorsLayer::permissive())
@@ -47,11 +74,8 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-fn load_state() -> AppState {
-    let current_path = current_dir()
-        .expect("Current dir not found")
-        .join("settings.json");
-    let settings = fs::read_to_string(current_path).expect("Error during reading settings.json");
+fn load_state(path_buf: &PathBuf) -> AppState {
+    let settings = fs::read_to_string(path_buf).expect("Error during reading settings.json");
     serde_json::from_str(&settings).expect("Loading state failed")
 }
 
