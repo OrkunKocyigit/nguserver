@@ -5,6 +5,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::panic::panic_any;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{Json, Router};
@@ -20,16 +21,20 @@ use serde_json::{json, Value};
 use tower_http::cors::CorsLayer;
 
 const DATE_FORMAT_STR: &str = "%Y-%m-%d %H:%M:%S%.3f";
-
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
 struct AppState {
+    settings: Arc<Mutex<Settings>>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct Settings {
     file_path: String,
     settings_path: String,
     settings_mapper: HashMap<String, String>,
 }
 
-impl AppState {
+impl Settings {
     pub fn file_path(&self) -> &str {
         &self.file_path
     }
@@ -47,6 +52,7 @@ async fn main() {
         .expect("Current dir not found")
         .join("settings.json");
     let state = load_state(&state_path);
+    let settings = Arc::clone(&state.settings);
     let mut debouncer =
         new_debouncer(
             Duration::from_secs(1),
@@ -56,7 +62,10 @@ async fn main() {
                         "{} Settings file refreshed",
                         Local::now().format(DATE_FORMAT_STR)
                     );
-                    event.first().map(|e| load_state(&e.path));
+                    if let Some(s) = event.first().map(|e| load_settings(&e.path)) {
+                        let mut guard = settings.lock().unwrap();
+                        *guard = s;
+                    }
                 }
                 Err(e) => panic_any(e),
             },
@@ -75,8 +84,14 @@ async fn main() {
 }
 
 fn load_state(path_buf: &PathBuf) -> AppState {
-    let settings = fs::read_to_string(path_buf).expect("Error during reading settings.json");
-    serde_json::from_str(&settings).expect("Loading state failed")
+    AppState {
+        settings: Arc::new(Mutex::new(load_settings(path_buf))),
+    }
+}
+
+fn load_settings(path_buf: &PathBuf) -> Settings {
+    let settings_str = fs::read_to_string(path_buf).expect("Error during reading settings.json");
+    serde_json::from_str(&settings_str).expect("Loading state failed")
 }
 
 async fn update_files(
@@ -87,11 +102,14 @@ async fn update_files(
         "{} Optimizer request received",
         Local::now().format(DATE_FORMAT_STR)
     );
+    let guard = state.settings.lock();
+    let settings = guard.unwrap();
+    dbg!(&settings);
     let optimizer_map: HashMap<_, _> = optimizer.iter().map(|o| (&o.label, &o.ids)).collect();
-    update_profile(state.file_path(), &optimizer_map);
+    update_profile(settings.file_path(), &optimizer_map);
     update_settings(
-        state.settings_path(),
-        state.settings_mapper(),
+        settings.settings_path(),
+        settings.settings_mapper(),
         &optimizer_map,
     );
     println!("{} Files Updated", Local::now().format(DATE_FORMAT_STR));
