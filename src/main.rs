@@ -182,10 +182,10 @@ fn update_profile(profile_path: &str, optimizer_map: &HashMap<&String, &Vec<u32>
     let file = fs::File::open(profile_path).expect("Profile read failed");
     let mut profile: Profile = serde_json::from_reader(file).expect("Profile is not valid json");
 
-    for gear in &mut profile.Breakpoints.Gear {
-        if let Some(comment) = &gear.Comment {
+    for gear in &mut profile.breakpoints.gear {
+        if let Some(comment) = &gear.comment {
             if let Some(ids) = optimizer_map.get(comment) {
-                gear.ID.clone_from(ids); // Modify this line if ID can be changed without cloning
+                gear.id.clone_from(ids); // Modify this line if ID can be changed without cloning
             }
         }
     }
@@ -238,20 +238,24 @@ impl<'de> Deserialize<'de> for Optimizer {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Profile {
-    Breakpoints: Breakpoint,
+    #[serde(rename = "Breakpoints")]
+    breakpoints: Breakpoint,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Breakpoint {
     #[serde(flatten)]
     other_fields: Value,
-    Gear: Vec<Gear>,
+    #[serde(rename = "Gear")]
+    gear: Vec<Gear>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Gear {
     #[serde(flatten)]
     other_fields: Value,
-    ID: Vec<u32>,
-    Comment: Option<String>,
+    #[serde(rename = "ID")]
+    id: Vec<u32>,
+    #[serde(rename = "Comment")]
+    comment: Option<String>,
 }
