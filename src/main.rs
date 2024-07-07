@@ -126,14 +126,21 @@ async fn update_files(
     );
     let settings = state.settings.read().unwrap();
     let mut optimizer_guard = state.optimizer.write().unwrap();
-    *optimizer_guard = Some(optimizer);
-    update_game_files(
-        optimizer_guard.as_ref().unwrap(),
-        settings.file_path(),
-        settings.settings_path(),
-        settings.settings_mapper(),
-    );
-    println!("{} Files Updated", Local::now().format(DATE_FORMAT_STR));
+    if optimizer_guard.as_ref().map_or(true, |v| v != &optimizer) {
+        *optimizer_guard = Some(optimizer);
+        update_game_files(
+            optimizer_guard.as_ref().unwrap(),
+            settings.file_path(),
+            settings.settings_path(),
+            settings.settings_mapper(),
+        );
+        println!("{} Files Updated", Local::now().format(DATE_FORMAT_STR));
+    } else {
+        println!(
+            "{} Optimizer result is same. Files won't be updated.",
+            Local::now().format(DATE_FORMAT_STR)
+        )
+    }
     StatusCode::OK
 }
 
@@ -191,7 +198,7 @@ fn update_profile(profile_path: &str, optimizer_map: &HashMap<&String, &Vec<u32>
     serde_json::to_writer_pretty(&mut file, &profile).expect("Failed to serialize json");
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct Optimizer {
     label: String,
     ids: Vec<u32>,
