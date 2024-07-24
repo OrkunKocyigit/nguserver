@@ -157,7 +157,7 @@ fn update_settings(
 ) {
     let file = fs::File::open(settings_path).expect("Profile read failed");
     let mut settings: Value = serde_json::from_reader(file).expect("Settings is not valid json");
-    for (optimizer_label, setting_label) in settings_mapper.into_iter() {
+    for (optimizer_label, setting_label) in settings_mapper.iter() {
         if let Some(value) = settings.get_mut(setting_label) {
             if let Some(ids) = optimizer_map.get(&optimizer_label) {
                 *value = json!(ids);
@@ -180,7 +180,13 @@ fn update_profile(profile_path: &str, optimizer_map: &HashMap<&String, &Vec<u32>
     for gear in &mut profile.breakpoints.gear {
         if let Some(comment) = &gear.comment {
             if let Some(ids) = optimizer_map.get(comment) {
-                gear.id.clone_from(ids); // Modify this line if ID can be changed without cloning
+                if !vectors_equal(&gear.id, ids) {
+                    gear.id.clone_from(ids);
+                    println!(
+                        "{} Gear object with {comment} is updated",
+                        Local::now().format(DATE_FORMAT_STR)
+                    )
+                }
             }
         }
     }
@@ -199,11 +205,16 @@ struct Optimizer {
     ids: Vec<u32>,
 }
 
+fn vectors_equal<T>(first_ids: &[T], other_ids: &[T]) -> bool
+where
+    T: PartialEq,
+{
+    first_ids.len() == other_ids.len() && first_ids.iter().all(|x| other_ids.contains(x))
+}
+
 impl PartialEq for Optimizer {
     fn eq(&self, other: &Self) -> bool {
-        self.label == other.label
-            && self.ids.len() == other.ids.len()
-            && self.ids.iter().all(|x| other.ids.contains(x))
+        self.label == other.label && vectors_equal(&self.ids, &other.ids)
     }
 }
 
