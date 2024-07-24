@@ -13,7 +13,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post;
 use chrono::Local;
-use notify_debouncer_mini::{DebounceEventResult, new_debouncer};
+use notify_debouncer_mini::{DebounceEventHandler, DebounceEventResult, new_debouncer};
 use notify_debouncer_mini::notify::RecursiveMode;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde::de::{MapAccess, Visitor};
@@ -25,6 +25,38 @@ const DATE_FORMAT_STR: &str = "%Y-%m-%d %H:%M:%S%.3f";
 struct AppState {
     settings: Arc<RwLock<Settings>>,
     optimizer: Arc<RwLock<Option<Vec<Optimizer>>>>,
+}
+
+impl DebounceEventHandler for AppState {
+    fn handle_event(&mut self, res: DebounceEventResult) {
+        match res {
+            Ok(event) => {
+                println!(
+                    "{} Settings file refreshed",
+                    Local::now().format(DATE_FORMAT_STR)
+                );
+                if let Some(s) = event.first().map(|e| load_settings(&e.path)) {
+                    let mut guard = self.settings.write().unwrap();
+                    let optimizer_guard = self.optimizer.read().unwrap();
+                    if let Some(o) = optimizer_guard.as_ref() {
+                        println!(
+                            "{} Refreshing builds with last optimizer data.",
+                            Local::now().format(DATE_FORMAT_STR)
+                        );
+                        update_game_files(o, s.file_path(), s.settings_path(), s.settings_mapper());
+                        println!("{} Files Updated", Local::now().format(DATE_FORMAT_STR));
+                    } else {
+                        println!(
+                            "{} No previous optimizer result found, skipping refresh.",
+                            Local::now().format(DATE_FORMAT_STR)
+                        )
+                    }
+                    *guard = s;
+                }
+            }
+            Err(e) => panic_any(e),
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -53,45 +85,8 @@ async fn main() {
         .expect("Current dir not found")
         .join("settings.json");
     let state = load_state(&state_path);
-    let settings = Arc::clone(&state.settings);
-    let optimizer = Arc::clone(&state.optimizer);
     let mut debouncer =
-        new_debouncer(
-            Duration::from_secs(1),
-            move |res: DebounceEventResult| match res {
-                Ok(event) => {
-                    println!(
-                        "{} Settings file refreshed",
-                        Local::now().format(DATE_FORMAT_STR)
-                    );
-                    if let Some(s) = event.first().map(|e| load_settings(&e.path)) {
-                        let mut guard = settings.write().unwrap();
-                        let optimizer_guard = optimizer.read().unwrap();
-                        if let Some(o) = optimizer_guard.as_ref() {
-                            println!(
-                                "{} Refreshing builds with last optimizer data.",
-                                Local::now().format(DATE_FORMAT_STR)
-                            );
-                            update_game_files(
-                                o,
-                                s.file_path(),
-                                s.settings_path(),
-                                s.settings_mapper(),
-                            );
-                            println!("{} Files Updated", Local::now().format(DATE_FORMAT_STR));
-                        } else {
-                            println!(
-                                "{} No previous optimizer result found, skipping refresh.",
-                                Local::now().format(DATE_FORMAT_STR)
-                            )
-                        }
-                        *guard = s;
-                    }
-                }
-                Err(e) => panic_any(e),
-            },
-        )
-        .expect("Failed to create debouncer");
+        new_debouncer(Duration::from_secs(1), state.clone()).expect("Failed to create debouncer");
     debouncer
         .watcher()
         .watch(state_path.as_path(), RecursiveMode::NonRecursive)
@@ -198,10 +193,18 @@ fn update_profile(profile_path: &str, optimizer_map: &HashMap<&String, &Vec<u32>
     serde_json::to_writer_pretty(&mut file, &profile).expect("Failed to serialize json");
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 struct Optimizer {
     label: String,
     ids: Vec<u32>,
+}
+
+impl PartialEq for Optimizer {
+    fn eq(&self, other: &Self) -> bool {
+        self.label == other.label
+            && self.ids.len() == other.ids.len()
+            && self.ids.iter().all(|x| other.ids.contains(x))
+    }
 }
 
 impl<'de> Deserialize<'de> for Optimizer {
