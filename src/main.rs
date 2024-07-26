@@ -160,7 +160,19 @@ fn update_settings(
     for (optimizer_label, setting_label) in settings_mapper.iter() {
         if let Some(value) = settings.get_mut(setting_label) {
             if let Some(ids) = optimizer_map.get(&optimizer_label) {
-                *value = json!(ids);
+                if let Some(value_ids) = value.as_array() {
+                    let gear_ids: Vec<u32> = value_ids
+                        .iter()
+                        .flat_map(|v| v.as_u64().map(|x| x as u32))
+                        .collect();
+                    if !vectors_equal(&gear_ids, ids) {
+                        println!("Setting {setting_label} updated with {optimizer_label}");
+                        *value = json!(ids);
+                    }
+                } else {
+                    println!("Setting {setting_label} updated with {optimizer_label}");
+                    *value = json!(ids);
+                }
             }
         }
     }
